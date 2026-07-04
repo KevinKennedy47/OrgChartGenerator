@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>組織図ジェネレータ</title>
+    <style>
+        /* 基本リセット */
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif; }
+        body { height: 100vh; display: flex; overflow: hidden; background-color: #f0f0f0; }
+
+        /* レイアウト */
+        #sidebar {
+            width: 200px;
+            background-color: #2c3e50;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+        #canvas-container {
+            flex-grow: 1;
+            position: relative;
+            overflow: auto;
+            background-color: #ffffff;
+        }
+        #canvas {
+            width: 3000px;
+            height: 2000px;
+            position: relative;
+        }
+
+        /* サイドバー要素 */
+        h1 { font-size: 1.2rem; margin-bottom: 20px; text-align: center; }
+        .btn {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.3s;
+            width: 100%;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+        .btn:hover { background-color: #2980b9; }
+        .btn-danger { background-color: #e74c3c; }
+        .btn-danger:hover { background-color: #c0392b; }
+        .btn-success { background-color: #2ecc71; }
+        .btn-success:hover { background-color: #27ae60; }
+        .btn-warning { background-color: #f39c12; }
+        .btn-warning:hover { background-color: #d68910; }
+
+        /* ノードスタイル */
+        .node {
+            position: absolute;
+            width: 240px;
+            min-height: 60px;
+            background-color: white;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 10px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+            cursor: move;
+            user-select: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            z-index: 1;
+        }
+        .node.root {
+            border: 2px solid #2c3e50;
+            font-weight: bold;
+            background-color: #ecf0f1;
+        }
+        .node:hover {
+            box-shadow: 4px 4px 8px rgba(0,0,0,0.3);
+            z-index: 2;
+        }
+        .node-name { font-weight: bold; font-size: 1rem; margin-bottom: 5px; }
+        .node-role { font-size: 0.8rem; color: #666; }
+        /* 名前なし・役職ありの強調表示 */
+        .node-role-highlight { font-size: 1rem; font-weight: bold; color: #2c3e50; }
+
+        /* SVG線 */
+        #connections {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+        path {
+            fill: none;
+            stroke: #333;
+            stroke-width: 2px;
+        }
+
+        /* モーダル */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        .modal {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            width: 400px;
+            max-width: 90%;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+        .modal h2 { margin-bottom: 15px; font-size: 1.2rem; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 0.9rem; }
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #fff;
+        }
+        .form-group textarea { height: 100px; resize: vertical; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        
+        .form-group input:disabled, .form-group textarea:disabled, .form-group select:disabled {
+            background-color: #e9ecef;
+            color: #495057;
+            cursor: not-allowed;
+        }
+
+        #add-modal .modal { width: 300px; }
+    </style>
+</head>
+<body>
+
+    <!-- サイドバー -->
+    <div id="sidebar">
+        <h1>組織図ジェネレータ</h1>
+        <div id="edit-controls">
+            <button class="btn btn-success" onclick="openAddModal()">＋ 新規追加</button>
+            <button class="btn" onclick="saveToBrowser()">💾 ブラウザ保存</button>
+            <button class="btn" onclick="loadFromBrowser()">📂 ブラウザ読み込み</button>
+            <button class="btn btn-warning" onclick="exportToFile()">⬇️ ファイル書き出し</button>
+            <button class="btn btn-warning" onclick="triggerFileImport()">⬆️ ファイル読み込み</button>
+            <button class="btn btn-danger" onclick="resetData()">🗑 初期化</button>
+        </div>
+        <div style="margin-top: auto;">
+            <button class="btn" id="mode-toggle-btn" onclick="toggleMode()">👁 ビューモード</button>
+            <div id="help-text" style="font-size: 0.8rem; color: #aaa; text-align: center; margin-top: 10px;">
+                ノードをドラッグして移動<br>クリックで編集
+            </div>
+        </div>
+    </div>
+
+    <!-- キャンバス -->
+    <div id="canvas-container">
+        <div id="canvas">
+            <svg id="connections"></svg>
+        </div>
+    </div>
+
+    <!-- 情報モーダル -->
+    <div id="info-modal" class="modal-overlay">
+        <div class="modal">
+            <h2 id="modal-title">人物情報</h2>
+            <input type="hidden" id="info-id">
+            <div class="form-group">
+                <label>名前</label>
+                <input type="text" id="info-name">
+            </div>
+            <div class="form-group">
+                <label>役職</label>
+                <input type="text" id="info-role">
+            </div>
+            <div class="form-group" id="parent-group">
+                <label>親ノード</label>
+                <select id="info-parent"></select>
+            </div>
+            <div class="form-group">
+                <label>来歴</label>
+                <textarea id="info-history"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-danger" id="delete-btn" onclick="deleteNode()">削除</button>
+                <button class="btn" id="cancel-btn" onclick="closeModal('info-modal')">キャンセル</button>
+                <button class="btn btn-success" id="save-btn" onclick="saveEdit()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 追加用モーダル -->
+    <div id="add-modal" class="modal-overlay">
+        <div class="modal">
+            <h2>新規追加</h2>
+            <div class="form-group">
+                <label>親ノードを選択</label>
+                <select id="add-parent"></select>
+            </div>
+            <div class="form-group">
+                <label>名前</label>
+                <input type="text" id="add-name" placeholder="例: 山田 太郎">
+            </div>
+            <div class="form-group">
+                <label>役職</label>
+                <input type="text" id="add-role" placeholder="例: 部長">
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeModal('add-modal')">キャンセル</button>
+                <button class="btn btn-success" onclick="addNode()">追加</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 隠しファイル入力 -->
+    <input type="file" id="file-input" accept=".json" style="display:none" onchange="importFromFile(event)">
+
+    <script>
+        let nodes = [];
+        let draggedNode = null;
+        let dragOffset = { x: 0, y: 0 };
+        let isDragging = false;
+        let currentMode = 'edit'; 
+
+        const initialData = [
+            { id: 'root', name: '取締役会', role: '', x: 100, y: 50, parentId: null, history: '' }
+        ];
+
+        window.onload = function() {
+            loadData();
+        };
+
+        // ブラウザ保存/読み込み
+        function saveToBrowser() {
+            updateNodePositions();
+            localStorage.setItem('orgChartNodes', JSON.stringify(nodes));
+            alert('ブラウザに保存しました！');
+        }
+
+        function loadFromBrowser() {
+            const stored = localStorage.getItem('orgChartNodes');
+            if (stored) {
+                nodes = JSON.parse(stored);
+                render();
+                alert('ブラウザから読み込みました！');
+            } else {
+                alert('保存データが見つかりません。');
+            }
+        }
+
+        // ファイル書き出し
+        function exportToFile() {
+            updateNodePositions();
+            const dataStr = JSON.stringify(nodes, null, 2);
+            const blob = new Blob([dataStr], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'org_chart_data.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // ファイル読み込みトリガー
+        function triggerFileImport() {
+            document.getElementById('file-input').click();
+        }
+
+        // ファイル読み込み処理
+        function importFromFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (!confirm('現在のデータを上書きして読み込みますか？')) {
+                event.target.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (Array.isArray(data)) {
+                        nodes = data;
+                        render();
+                        alert('ファイルから読み込み完了しました！');
+                    } else {
+                        alert('無効なファイル形式です。');
+                    }
+                } catch (err) {
+                    alert('ファイルの解析に失敗しました。');
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = ''; 
+        }
+
+        // 初期化
+        function resetData() {
+            if(confirm('データを初期状態に戻しますか？')) {
+                localStorage.removeItem('orgChartNodes');
+                nodes = JSON.parse(JSON.stringify(initialData));
+                render();
+            }
+        }
+
+        // 位置更新共通関数
+        function updateNodePositions() {
+            document.querySelectorAll('.node').forEach(el => {
+                const id = el.dataset.id;
+                const node = nodes.find(n => n.id === id);
+                if (node) {
+                    node.x = parseInt(el.style.left);
+                    node.y = parseInt(el.style.top);
+                }
+            });
+        }
+
+        // モード切替
+        function toggleMode() {
+            closeModal('info-modal');
+            closeModal('add-modal');
+            
+            currentMode = currentMode === 'edit' ? 'view' : 'edit';
+            isDragging = false; // ドラッグ状態をリセット（モード切替時）
+            const btn = document.getElementById('mode-toggle-btn');
+            btn.textContent = currentMode === 'edit' ? '👁 ビューモード' : '✏️ エディットモード';
+            
+            const editControls = document.getElementById('edit-controls');
+            const helpText = document.getElementById('help-text');
+            
+            if (currentMode === 'view') {
+                editControls.style.display = 'none';
+                helpText.innerHTML = 'クリックで来歴を確認';
+            } else {
+                editControls.style.display = 'block';
+                helpText.innerHTML = 'ノードをドラッグして移動<br>クリックで編集';
+            }
+            
+            render();
+        }
+
+        function render() {
+            const canvas = document.getElementById('canvas');
+            const existingNodes = canvas.querySelectorAll('.node');
+            existingNodes.forEach(n => n.remove());
+
+            nodes.forEach(node => {
+                const el = document.createElement('div');
+                el.className = `node ${node.id === 'root' ? 'root' : ''}`;
+                el.dataset.id = node.id;
+                el.style.left = `${node.x}px`;
+                el.style.top = `${node.y}px`;
+                el.style.cursor = currentMode === 'edit' ? 'move' : 'pointer';
+                
+                // 名前が空で役職がある場合は強調表示
+                const nameHtml = node.name ? `<div class="node-name">${node.name}</div>` : '';
+                let roleClass = 'node-role';
+                if (!node.name && node.role) {
+                    roleClass += ' node-role-highlight';
+                }
+                
+                el.innerHTML = `
+                    ${nameHtml}
+                    <div class="${roleClass}">${node.role}</div>
+                `;
+                
+                el.addEventListener('click', (e) => {
+                    if (!isDragging) openInfoModal(node.id);
+                });
+
+                el.addEventListener('mousedown', (e) => startDrag(e, node.id));
+                canvas.appendChild(el);
+            });
+
+            drawConnections();
+        }
+
+        function drawConnections() {
+            const svg = document.getElementById('connections');
+            svg.innerHTML = '';
+
+            nodes.forEach(node => {
+                if (node.parentId) {
+                    const parent = nodes.find(n => n.id === node.parentId);
+                    if (parent) {
+                        const parentEl = document.querySelector(`.node[data-id="${parent.id}"]`);
+                        const childEl = document.querySelector(`.node[data-id="${node.id}"]`);
+                        
+                        if (parentEl && childEl) {
+                            const pRect = parentEl.getBoundingClientRect();
+                            const cRect = childEl.getBoundingClientRect();
+                            const canvasRect = document.getElementById('canvas').getBoundingClientRect();
+
+                            const pX = pRect.left + pRect.width / 2 - canvasRect.left;
+                            const pY = pRect.bottom - canvasRect.top;
+                            const cX = cRect.left + cRect.width / 2 - canvasRect.left;
+                            const cY = cRect.top - canvasRect.top;
+
+                            const midY = (pY + cY) / 2;
+                            const path = `M ${pX} ${pY} L ${pX} ${midY} L ${cX} ${midY} L ${cX} ${cY}`;
+                            
+                            const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                            pathEl.setAttribute('d', path);
+                            svg.appendChild(pathEl);
+                        }
+                    }
+                }
+            });
+        }
+
+        function startDrag(e, id) {
+            if (currentMode !== 'edit') return;
+            if (e.button !== 0) return;
+            
+            draggedNode = nodes.find(n => n.id === id);
+            const el = document.querySelector(`.node[data-id="${id}"]`);
+            
+            dragOffset.x = e.clientX - el.offsetLeft;
+            dragOffset.y = e.clientY - el.offsetTop;
+            isDragging = false;
+            
+            document.addEventListener('mousemove', onDrag);
+            document.addEventListener('mouseup', stopDrag);
+        }
+
+        function onDrag(e) {
+            if (!draggedNode) return;
+            isDragging = true;
+            
+            const canvas = document.getElementById('canvas');
+            let newX = e.clientX - dragOffset.x;
+            let newY = e.clientY - dragOffset.y;
+
+            newX = Math.max(0, Math.min(newX, canvas.clientWidth - 240));
+            newY = Math.max(0, Math.min(newY, canvas.clientHeight - 60));
+
+            const el = document.querySelector(`.node[data-id="${draggedNode.id}"]`);
+            el.style.left = `${newX}px`;
+            el.style.top = `${newY}px`;
+
+            draggedNode.x = newX;
+            draggedNode.y = newY;
+            drawConnections();
+        }
+
+        function stopDrag() {
+            draggedNode = null;
+            isDragging = false; // ドラッグ終了時に確実にリセット
+            document.removeEventListener('mousemove', onDrag);
+            document.removeEventListener('mouseup', stopDrag);
+        }
+
+        // ドロップダウンオプションのテキスト生成ヘルパー
+        function formatOptionText(node) {
+            return node.role ? `${node.name}(${node.role})` : node.name;
+        }
+
+        function openInfoModal(id) {
+            const node = nodes.find(n => n.id === id);
+            if (!node) return;
+
+            document.getElementById('info-id').value = node.id;
+            document.getElementById('info-name').value = node.name;
+            document.getElementById('info-role').value = node.role;
+            document.getElementById('info-history').value = node.history || '';
+            
+            const parentSelect = document.getElementById('info-parent');
+            const parentGroup = document.getElementById('parent-group');
+            const saveBtn = document.getElementById('save-btn');
+            const cancelBtn = document.getElementById('cancel-btn');
+            const deleteBtn = document.getElementById('delete-btn');
+
+            if (currentMode === 'edit') {
+                document.getElementById('info-name').disabled = false;
+                document.getElementById('info-role').disabled = false;
+                document.getElementById('info-history').disabled = false;
+                parentSelect.disabled = false;
+                parentGroup.style.display = 'block';
+                
+                saveBtn.style.display = 'inline-block';
+                cancelBtn.style.display = 'inline-block';
+                cancelBtn.textContent = 'キャンセル';
+                
+                parentSelect.innerHTML = '';
+                if (node.id === 'root') {
+                    parentSelect.innerHTML = '<option>トップノードは変更不可</option>';
+                    parentSelect.disabled = true;
+                    deleteBtn.style.display = 'none';
+                } else {
+                    nodes.forEach(n => {
+                        if (n.id !== node.id) {
+                            const opt = document.createElement('option');
+                            opt.value = n.id;
+                            opt.text = formatOptionText(n);
+                            if (n.id === node.parentId) opt.selected = true;
+                            parentSelect.appendChild(opt);
+                        }
+                    });
+                    const rootOpt = document.createElement('option');
+                    rootOpt.value = 'root';
+                    rootOpt.text = formatOptionText(nodes.find(n => n.id === 'root'));
+                    if (node.parentId === 'root') rootOpt.selected = true;
+                    parentSelect.insertBefore(rootOpt, parentSelect.firstChild);
+                    deleteBtn.style.display = 'inline-block';
+                }
+            } else {
+                document.getElementById('info-name').disabled = true;
+                document.getElementById('info-role').disabled = true;
+                document.getElementById('info-history').disabled = true;
+                parentGroup.style.display = 'none';
+                
+                saveBtn.style.display = 'none';
+                cancelBtn.style.display = 'inline-block';
+                cancelBtn.textContent = '閉じる';
+                deleteBtn.style.display = 'none';
+            }
+
+            document.getElementById('info-modal').style.display = 'flex';
+        }
+
+        function openAddModal() {
+            const parentSelect = document.getElementById('add-parent');
+            parentSelect.innerHTML = '';
+            nodes.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n.id;
+                opt.text = formatOptionText(n);
+                parentSelect.appendChild(opt);
+            });
+            document.getElementById('add-name').value = '';
+            document.getElementById('add-role').value = '';
+            document.getElementById('add-modal').style.display = 'flex';
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).style.display = 'none';
+        }
+
+        function saveEdit() {
+            const id = document.getElementById('info-id').value;
+            const node = nodes.find(n => n.id === id);
+            if (!node) return;
+
+            node.name = document.getElementById('info-name').value;
+            node.role = document.getElementById('info-role').value;
+            node.history = document.getElementById('info-history').value;
+            
+            const newParentId = document.getElementById('info-parent').value;
+            if (newParentId && node.id !== 'root') {
+                node.parentId = newParentId;
+            }
+
+            closeModal('info-modal');
+            render();
+        }
+
+        function deleteNode() {
+            const id = document.getElementById('info-id').value;
+            if (id === 'root') return;
+
+            if (!confirm('このノードを削除しますか？子ノードはトップノードへ移動します。')) return;
+
+            nodes.forEach(n => {
+                if (n.parentId === id) n.parentId = 'root';
+            });
+
+            nodes = nodes.filter(n => n.id !== id);
+            closeModal('info-modal');
+            render();
+        }
+
+        function addNode() {
+            const parentId = document.getElementById('add-parent').value;
+            const name = document.getElementById('add-name').value;
+            const role = document.getElementById('add-role').value;
+
+            const parent = nodes.find(n => n.id === parentId);
+            const newNode = {
+                id: 'node-' + Date.now(),
+                name: name,
+                role: role,
+                x: parent ? parent.x : 200,
+                y: parent ? parent.y + 100 : 200,
+                parentId: parentId,
+                history: ''
+            };
+
+            nodes.push(newNode);
+            closeModal('add-modal');
+            render();
+        }
+
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) closeModal(overlay.id);
+            });
+        });
+
+    </script>
+</body>
+</html>
